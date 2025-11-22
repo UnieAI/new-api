@@ -627,10 +627,12 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	service.ResetProxyClientCache()
+	model.InitChannelCache()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 	})
+
 	return
 }
 
