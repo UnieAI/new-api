@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -42,7 +43,13 @@ type OptionUpdateRequest struct {
 	Value any    `json:"value"`
 }
 
+var updateOptionLock sync.Mutex
+
 func UpdateOption(c *gin.Context) {
+
+    updateOptionLock.Lock()
+    defer updateOptionLock.Unlock()
+
 	var option OptionUpdateRequest
 	err := json.NewDecoder(c.Request.Body).Decode(&option)
 	if err != nil {
@@ -212,4 +219,105 @@ func UpdateOption(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+// --------------------------------------
+
+var optionUpdateMutex = map[string]*sync.Mutex{
+    "ModelPrice":        &sync.Mutex{},
+    "GroupRatio":        &sync.Mutex{},
+    "UserUsableGroups":  &sync.Mutex{},
+}
+
+func UpdateOptionByName(c *gin.Context) {
+    var req struct {
+        Key   string      `json:"key"`
+        Name  string      `json:"name"`
+        Value interface{} `json:"value"`
+    }
+
+    if err := c.BindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "參數格式錯誤"})
+        return
+    }
+
+    // 鎖定 key（避免多使用者同時寫入）
+    lock := optionUpdateMutex[req.Key]
+    lock.Lock()
+    defer lock.Unlock()
+
+    // 取得現有 JSON 字串
+    common.OptionMapRWMutex.RLock()
+    jsonStr := common.OptionMap[req.Key]
+    common.OptionMapRWMutex.RUnlock()
+
+    rawMap := map[string]interface{}{}
+    if len(jsonStr) > 0 {
+        _ = json.Unmarshal([]byte(jsonStr), &rawMap)
+    }
+
+	fmt.Printf("Value type = %T, value = %#v\n", req.Value, req.Value)
+
+    // ⭐ 根據 key 做類型處理 ⭐
+    switch req.Key {
+
+    // ----------------------------------------------------
+    // 1️⃣ ModelPrice（float64）
+    // ----------------------------------------------------
+    case "ModelPrice", "GroupRatio":
+        if req.Value == nil {
+            delete(rawMap, req.Name)
+        } else {
+            f, ok := req.Value.(float64)
+            if !ok {
+                c.JSON(http.StatusBadRequest, gin.H{
+                    "success": false,
+                    "message": "ModelPrice/GroupRatio 的 value 必須是數字",
+                })
+                return
+            }
+            rawMap[req.Name] = f
+        }
+
+    // ----------------------------------------------------
+    // 2️⃣ UserUsableGroups（string）
+    // ----------------------------------------------------
+    case "UserUsableGroups":
+        if req.Value == nil {
+            delete(rawMap, req.Name)
+        } else {
+            s, ok := req.Value.(string)
+            if !ok {
+                c.JSON(http.StatusBadRequest, gin.H{
+                    "success": false,
+                    "message": "UserUsableGroups 的 value 必須是字串",
+                })
+                return
+            }
+            rawMap[req.Name] = s
+        }
+
+    default:
+        c.JSON(http.StatusBadRequest, gin.H{
+            "success": false,
+            "message": "不支援的 key",
+        })
+        return
+    }
+
+    // 重新 encode 成 JSON
+    newJSON, _ := json.Marshal(rawMap)
+
+    // 寫回 DB + OptionMap + 更新記憶體配置
+    if err := model.UpdateOption(req.Key, string(newJSON)); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "success": false,
+            "message": "寫入資料庫失敗: " + err.Error(),
+        })
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "success": true,
+    })
 }
