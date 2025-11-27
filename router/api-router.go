@@ -51,6 +51,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			userRoute.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register)
 			userRoute.POST("/login", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Login)
+			userRoute.POST("/login_admin", controller.Login) // 登入 admin 用
 			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), controller.Verify2FALogin)
 			userRoute.POST("/passkey/login/begin", middleware.CriticalRateLimit(), controller.PasskeyLoginBegin)
 			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), controller.PasskeyLoginFinish)
